@@ -2,8 +2,6 @@
 
 import { DefaultSession, NextAuthOptions } from "next-auth";
 import CredentialsProvider from "next-auth/providers/credentials";
-import PostgresAdapter from "@auth/pg-adapter";
-import { Pool } from "pg";
 import bcryptjs from "bcryptjs";
 import { query } from "./database";
 
@@ -17,15 +15,7 @@ import { query } from "./database";
  * 4. **Security**: Handles all the complex security stuff automatically
  */
 
-// Create connection pool for NextAuth
-const pool = new Pool({
-	connectionString: process.env.DATABASE_URL
-});
-
 export const authOptions: NextAuthOptions = {
-	// Connect NextAuth to our PostgreSQL database
-	adapter: PostgresAdapter(pool),
-
 	// How users can sign in
 	providers: [
 		CredentialsProvider({
@@ -84,10 +74,17 @@ export const authOptions: NextAuthOptions = {
 
 	// Customize what data goes into the session
 	callbacks: {
-		async session({ session, user }) {
-			// Add user ID to session so we can use it in our app
-			if (session.user && user) {
-				session.user.id = user.id;
+		async jwt({ token, user }) {
+			// Add user ID to token when user signs in
+			if (user) {
+				token.id = user.id;
+			}
+			return token;
+		},
+		async session({ session, token }) {
+			// Add user ID to session from token
+			if (token && session.user) {
+				session.user.id = token.id as string;
 			}
 			return session;
 		}
@@ -95,7 +92,7 @@ export const authOptions: NextAuthOptions = {
 
 	// Session settings
 	session: {
-		strategy: "database", // Store sessions in database (more secure than JWT)
+		strategy: "jwt", // Required for credentials provider
 		maxAge: 30 * 24 * 60 * 60 // 30 days
 	},
 

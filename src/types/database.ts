@@ -1,11 +1,9 @@
 export interface User {
 	id: number;
-	email: string;
-	password: string;
 	name: string;
-	email_verified: boolean;
-	email_verification_token?: string;
-	email_verification_expires?: Date;
+	email: string;
+	emailVerified: number;
+	image?: string;
 	created_at: Date;
 	updated_at: Date;
 }
@@ -24,13 +22,11 @@ export interface Expense {
 	id: number;
 	user_id: number;
 	category_id: number;
-	amount: number;
+	amount: string;
 	description: string;
-	date: string; // YYYY-MM-DD format
-	time: string; // HH:MM:SS format
-	notes?: string;
+	date: Date;
+	time: string;
+	notes: string;
 	created_at: Date;
 	updated_at: Date;
-	// When joined with category
-	category?: Category;
 }

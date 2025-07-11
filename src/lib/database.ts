@@ -64,4 +64,4 @@ export async function end() {
 	await pool.end();
 }
 
-export default pool;
+export { pool };
