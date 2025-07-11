@@ -1,5 +1,3 @@
-// Separate registration endpoint (since NextAuth credentials don't handle registration)
-
 import { NextRequest, NextResponse } from "next/server";
 import bcryptjs from "bcryptjs";
 import { query } from "@/lib/database";
@@ -29,11 +27,9 @@ export async function POST(request: NextRequest) {
 
 		// Create user
 		const newUser = await query(
-			`
-      INSERT INTO users (email, name, "emailVerified")
-      VALUES ($1, $2, CURRENT_TIMESTAMP)
-      RETURNING id, email, name
-    `,
+			`INSERT INTO users (email, name, "emailVerified")
+       VALUES ($1, $2, CURRENT_TIMESTAMP)
+       RETURNING id, email, name`,
 			[email, name]
 		);
 
@@ -41,10 +37,8 @@ export async function POST(request: NextRequest) {
 
 		// Store password
 		await query(
-			`
-      INSERT INTO user_credentials (user_id, password_hash)
-      VALUES ($1, $2)
-    `,
+			`INSERT INTO user_credentials (user_id, password_hash)
+       VALUES ($1, $2)`,
 			[userId, hashedPassword]
 		);
 
