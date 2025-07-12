@@ -1,5 +1,3 @@
-// This file creates the NextAuth API endpoints
-
 import NextAuth from "next-auth";
 import { authOptions } from "@/lib/auth";
 
