@@ -210,32 +210,21 @@ export function CSVImportDialog({ children, accounts, onImportComplete }: CSVImp
           success: true,
           result: result.result
         });
-        toast({
-          title: "Import successful",
-          description: `Imported ${result.result.imported} transactions successfully`
-        });
+        toast.success(`Import successful! Imported ${result.result.imported} transactions successfully`);
         onImportComplete();
       } else {
         setImportResult({
           success: false,
           error: result.error || "Import failed"
         });
-        toast({
-          title: "Import failed",
-          description: result.error || "An error occurred during import",
-          variant: "destructive"
-        });
+        toast.error(`Import failed: ${result.error || "An error occurred during import"}`);
       }
     } catch (error) {
       setImportResult({
         success: false,
         error: error instanceof Error ? error.message : "Unknown error"
       });
-      toast({
-        title: "Import failed",
-        description: "An error occurred during import",
-        variant: "destructive"
-      });
+      toast.error("Import failed: An error occurred during import");
     } finally {
       setIsImporting(false);
       setStep('results');
