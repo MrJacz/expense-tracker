@@ -24,13 +24,15 @@ export function Header() {
 			name: "Dashboard",
 			href: "/dashboard",
 			icon: Home,
-			current: pathname === "/dashboard"
+			current: pathname === "/dashboard",
+			id: undefined
 		},
 		{
 			name: "Analytics",
 			href: "/analytics",
 			icon: BarChart3,
-			current: pathname === "/analytics"
+			current: pathname === "/analytics",
+			id: "analytics-nav"
 		}
 	];
 
@@ -51,6 +53,7 @@ export function Header() {
 							<Link
 								key={item.name}
 								href={item.href}
+								id={item.id}
 								className={cn(
 									"flex items-center gap-2 transition-colors hover:text-foreground/80",
 									item.current ? "text-foreground" : "text-foreground/60"
