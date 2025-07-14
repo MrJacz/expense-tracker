@@ -14,8 +14,34 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-	title: "Personal Expense Tracker",
-	description: "Track your expenses and manage your budget"
+	title: {
+		default: "ExpenseTracker - Take Control of Your Finances",
+		template: "%s | ExpenseTracker"
+	},
+	description: "Simple, powerful expense tracking with beautiful analytics. Track expenses, set budgets, and make smarter financial decisions.",
+	keywords: ["expense tracker", "budget", "finance", "money management"],
+	authors: [{ name: "Jack Nagle" }],
+	creator: "Jack Nagle",
+	icons: {
+		icon: "/favicon.ico"
+	},
+	openGraph: {
+		type: "website",
+		locale: "en_US",
+		url: "https://your-domain.com",
+		title: "ExpenseTracker - Take Control of Your Finances",
+		description: "Simple, powerful expense tracking with beautiful analytics.",
+		siteName: "ExpenseTracker"
+	},
+	twitter: {
+		card: "summary_large_image",
+		title: "ExpenseTracker - Take Control of Your Finances",
+		description: "Simple, powerful expense tracking with beautiful analytics."
+	},
+	robots: {
+		index: true,
+		follow: true
+	}
 };
 
 export default function RootLayout({
@@ -24,7 +50,7 @@ export default function RootLayout({
 	children: React.ReactNode;
 }>) {
 	return (
-		<html lang="en">
+		<html lang="en" suppressHydrationWarning>
 			<body className={`${geistSans.variable} ${geistMono.variable} antialiased`}>
 				<Providers>{children}</Providers>
 			</body>

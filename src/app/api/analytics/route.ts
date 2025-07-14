@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
-import { query } from "@/lib/database";
+import { prisma } from "@/lib/database";
 
 export async function GET(request: NextRequest) {
 	try {
@@ -14,237 +14,156 @@ export async function GET(request: NextRequest) {
 		const { searchParams } = new URL(request.url);
 		const startDate = searchParams.get("startDate");
 		const endDate = searchParams.get("endDate");
-		const type = searchParams.get("type"); // category, daily, weekly, monthly
+		const type = searchParams.get("type");
 
-		let dateFilter = "";
-		const queryParams = [session.user.id];
-		let paramCount = 1;
-
+		// Build date filter for Prisma
+		const dateFilter: { gte?: Date; lte?: Date } = {};
 		if (startDate) {
-			paramCount++;
-			dateFilter += ` AND e.date >= $${paramCount}`;
-			queryParams.push(startDate);
+			dateFilter.gte = new Date(startDate);
 		}
-
 		if (endDate) {
-			paramCount++;
-			dateFilter += ` AND e.date <= $${paramCount}`;
-			queryParams.push(endDate);
+			dateFilter.lte = new Date(endDate);
 		}
 
 		const analytics: Record<string, unknown> = {};
 
+		// Base where clause for transactions
+		const baseWhere = {
+			userId: session.user.id,
+			type: "expense" as const,
+			...(Object.keys(dateFilter).length > 0 && { date: dateFilter })
+		};
+
 		// Category breakdown
 		if (!type || type === "category") {
-			const categoryQuery = `
-        SELECT
-          c.id,
-          c.name,
-          c.color,
-          c.icon,
-          COUNT(e.id) as transaction_count,
-          SUM(e.amount) as total_amount,
-          AVG(e.amount) as avg_amount,
-          ROUND((SUM(e.amount) * 100.0 / (
-            SELECT SUM(amount) FROM expenses
-            WHERE user_id = $1 ${dateFilter}
-          )), 2) as percentage
-        FROM categories c
-        LEFT JOIN expenses e ON c.id = e.category_id AND e.user_id = $1 ${dateFilter}
-        WHERE (c.is_default = true OR c.user_id = $1)
-        GROUP BY c.id, c.name, c.color, c.icon
-        HAVING COUNT(e.id) > 0
-        ORDER BY total_amount DESC
-      `;
+			const categoryBreakdown = await prisma.category.findMany({
+				where: {
+					OR: [
+						{ userId: session.user.id },
+						{ isDefault: true }
+					]
+				},
+				include: {
+					transactionSplits: {
+						where: {
+							transaction: baseWhere
+						}
+					}
+				}
+			});
 
-			const categoryResult = await query(categoryQuery, queryParams);
-			analytics.categoryBreakdown = categoryResult.rows.map((row) => ({
-				id: row.id,
-				name: row.name,
-				color: row.color,
-				icon: row.icon,
-				value: parseFloat(row.total_amount),
-				count: parseInt(row.transaction_count),
-				average: parseFloat(row.avg_amount),
-				percentage: parseFloat(row.percentage) || 0
-			}));
+			const totalAmount = await prisma.transactionSplit.aggregate({
+				where: {
+					transaction: baseWhere
+				},
+				_sum: {
+					amount: true
+				}
+			});
+
+			const total = totalAmount._sum.amount?.toNumber() || 0;
+
+			analytics.categoryBreakdown = categoryBreakdown
+				.map(category => {
+					const splits = category.transactionSplits;
+					const categoryTotal = splits.reduce((sum, split) => sum + split.amount.toNumber(), 0);
+					const count = splits.length;
+
+					if (count === 0) return null;
+
+					return {
+						id: category.id,
+						name: category.name,
+						value: categoryTotal,
+						count,
+						average: count > 0 ? categoryTotal / count : 0,
+						percentage: total > 0 ? (categoryTotal / total) * 100 : 0
+					};
+				})
+				.filter(Boolean)
+				.sort((a, b) => (b?.value || 0) - (a?.value || 0));
 		}
 
 		// Daily spending trend
 		if (!type || type === "daily") {
-			const dailyQuery = `
-        SELECT
-          e.date,
-          SUM(e.amount) as total_amount,
-          COUNT(e.id) as transaction_count,
-          AVG(e.amount) as avg_amount
-        FROM expenses e
-        WHERE e.user_id = $1 ${dateFilter}
-        GROUP BY e.date
-        ORDER BY e.date ASC
-      `;
+			const transactions = await prisma.transaction.findMany({
+				where: baseWhere,
+				include: {
+					splits: true
+				},
+				orderBy: {
+					date: 'asc'
+				}
+			});
 
-			const dailyResult = await query(dailyQuery, queryParams);
-			analytics.dailyTrend = dailyResult.rows.map((row) => ({
-				date: row.date,
-				amount: parseFloat(row.total_amount),
-				count: parseInt(row.transaction_count),
-				average: parseFloat(row.avg_amount),
-				formattedDate: new Date(row.date).toLocaleDateString("en-US", {
+			const dailyData = new Map();
+			
+			transactions.forEach(transaction => {
+				const dateKey = transaction.date.toISOString().split('T')[0];
+				const totalAmount = transaction.splits.reduce((sum, split) => sum + split.amount.toNumber(), 0);
+				
+				if (!dailyData.has(dateKey)) {
+					dailyData.set(dateKey, {
+						date: dateKey,
+						amount: 0,
+						count: 0,
+						transactions: []
+					});
+				}
+				
+				const day = dailyData.get(dateKey);
+				day.amount += totalAmount;
+				day.count += 1;
+				day.transactions.push(totalAmount);
+			});
+
+			analytics.dailyTrend = Array.from(dailyData.values()).map(day => ({
+				date: day.date,
+				amount: day.amount,
+				count: day.count,
+				average: day.count > 0 ? day.amount / day.count : 0,
+				formattedDate: new Date(day.date).toLocaleDateString("en-US", {
 					month: "short",
 					day: "numeric"
 				})
-			}));
-		}
-
-		// Weekly spending trend
-		if (!type || type === "weekly") {
-			const weeklyQuery = `
-        SELECT
-          DATE_TRUNC('week', e.date) as week_start,
-          SUM(e.amount) as total_amount,
-          COUNT(e.id) as transaction_count,
-          AVG(e.amount) as avg_amount
-        FROM expenses e
-        WHERE e.user_id = $1 ${dateFilter}
-        GROUP BY DATE_TRUNC('week', e.date)
-        ORDER BY week_start ASC
-      `;
-
-			const weeklyResult = await query(weeklyQuery, queryParams);
-			analytics.weeklyTrend = weeklyResult.rows.map((row) => ({
-				week: row.week_start,
-				amount: parseFloat(row.total_amount),
-				count: parseInt(row.transaction_count),
-				average: parseFloat(row.avg_amount),
-				formattedWeek: new Date(row.week_start).toLocaleDateString("en-US", {
-					month: "short",
-					day: "numeric"
-				})
-			}));
-		}
-
-		// Monthly comparison
-		if (!type || type === "monthly") {
-			const monthlyQuery = `
-        SELECT
-          DATE_TRUNC('month', e.date) as month_start,
-          EXTRACT(YEAR FROM e.date) as year,
-          EXTRACT(MONTH FROM e.date) as month,
-          SUM(e.amount) as total_amount,
-          COUNT(e.id) as transaction_count,
-          AVG(e.amount) as avg_amount
-        FROM expenses e
-        WHERE e.user_id = $1 ${dateFilter}
-        GROUP BY DATE_TRUNC('month', e.date), EXTRACT(YEAR FROM e.date), EXTRACT(MONTH FROM e.date)
-        ORDER BY month_start ASC
-      `;
-
-			const monthlyResult = await query(monthlyQuery, queryParams);
-			analytics.monthlyTrend = monthlyResult.rows.map((row) => ({
-				month: row.month_start,
-				year: parseInt(row.year),
-				monthNumber: parseInt(row.month),
-				amount: parseFloat(row.total_amount),
-				count: parseInt(row.transaction_count),
-				average: parseFloat(row.avg_amount),
-				formattedMonth: new Date(row.month_start).toLocaleDateString("en-US", {
-					year: "numeric",
-					month: "short"
-				})
-			}));
-		}
-
-		// Top spending days
-		if (!type || type === "top-days") {
-			const topDaysQuery = `
-        SELECT
-          e.date,
-          SUM(e.amount) as total_amount,
-          COUNT(e.id) as transaction_count,
-          ARRAY_AGG(DISTINCT c.name) as categories
-        FROM expenses e
-        JOIN categories c ON e.category_id = c.id
-        WHERE e.user_id = $1 ${dateFilter}
-        GROUP BY e.date
-        ORDER BY total_amount DESC
-        LIMIT 10
-      `;
-
-			const topDaysResult = await query(topDaysQuery, queryParams);
-			analytics.topSpendingDays = topDaysResult.rows.map((row) => ({
-				date: row.date,
-				amount: parseFloat(row.total_amount),
-				count: parseInt(row.transaction_count),
-				categories: row.categories,
-				formattedDate: new Date(row.date).toLocaleDateString("en-US", {
-					weekday: "short",
-					month: "short",
-					day: "numeric"
-				})
-			}));
-		}
-
-		// Spending patterns by day of week
-		if (!type || type === "day-patterns") {
-			const dayPatternQuery = `
-        SELECT
-          EXTRACT(DOW FROM e.date) as day_of_week,
-          CASE EXTRACT(DOW FROM e.date)
-            WHEN 0 THEN 'Sunday'
-            WHEN 1 THEN 'Monday'
-            WHEN 2 THEN 'Tuesday'
-            WHEN 3 THEN 'Wednesday'
-            WHEN 4 THEN 'Thursday'
-            WHEN 5 THEN 'Friday'
-            WHEN 6 THEN 'Saturday'
-          END as day_name,
-          SUM(e.amount) as total_amount,
-          COUNT(e.id) as transaction_count,
-          AVG(e.amount) as avg_amount
-        FROM expenses e
-        WHERE e.user_id = $1 ${dateFilter}
-        GROUP BY EXTRACT(DOW FROM e.date)
-        ORDER BY day_of_week
-      `;
-
-			const dayPatternResult = await query(dayPatternQuery, queryParams);
-			analytics.dayPatterns = dayPatternResult.rows.map((row) => ({
-				dayOfWeek: parseInt(row.day_of_week),
-				dayName: row.day_name,
-				amount: parseFloat(row.total_amount),
-				count: parseInt(row.transaction_count),
-				average: parseFloat(row.avg_amount)
 			}));
 		}
 
 		// Summary statistics
-		const summaryQuery = `
-      SELECT
-        COUNT(*) as total_transactions,
-        SUM(amount) as total_amount,
-        AVG(amount) as avg_transaction,
-        MIN(amount) as min_transaction,
-        MAX(amount) as max_transaction,
-        COUNT(DISTINCT category_id) as unique_categories,
-        COUNT(DISTINCT date) as unique_days
-      FROM expenses e
-      WHERE e.user_id = $1 ${dateFilter}
-    `;
+		const transactions = await prisma.transaction.findMany({
+			where: baseWhere,
+			include: {
+				splits: {
+					include: {
+						category: true
+					}
+				}
+			}
+		});
 
-		const summaryResult = await query(summaryQuery, queryParams);
-		if (summaryResult.rows.length > 0) {
-			const summary = summaryResult.rows[0];
-			analytics.summary = {
-				totalTransactions: parseInt(summary.total_transactions),
-				totalAmount: parseFloat(summary.total_amount) || 0,
-				avgTransaction: parseFloat(summary.avg_transaction) || 0,
-				minTransaction: parseFloat(summary.min_transaction) || 0,
-				maxTransaction: parseFloat(summary.max_transaction) || 0,
-				uniqueCategories: parseInt(summary.unique_categories),
-				uniqueDays: parseInt(summary.unique_days)
-			};
-		}
+		const amounts = transactions.flatMap(t => 
+			t.splits.map(s => s.amount.toNumber())
+		);
+
+		const uniqueCategories = new Set(
+			transactions.flatMap(t => 
+				t.splits.map(s => s.categoryId).filter(Boolean)
+			)
+		).size;
+
+		const uniqueDays = new Set(
+			transactions.map(t => t.date.toISOString().split('T')[0])
+		).size;
+
+		analytics.summary = {
+			totalTransactions: transactions.length,
+			totalAmount: amounts.reduce((sum, amount) => sum + amount, 0),
+			avgTransaction: amounts.length > 0 ? amounts.reduce((sum, amount) => sum + amount, 0) / amounts.length : 0,
+			minTransaction: amounts.length > 0 ? Math.min(...amounts) : 0,
+			maxTransaction: amounts.length > 0 ? Math.max(...amounts) : 0,
+			uniqueCategories,
+			uniqueDays
+		};
 
 		return NextResponse.json({ analytics });
 	} catch (error) {

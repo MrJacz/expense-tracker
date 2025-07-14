@@ -99,7 +99,7 @@ export function AnalyticsPreview({ expenses }: AnalyticsPreviewProps) {
 					<CardDescription>Quick insights from your last 30 days</CardDescription>
 				</div>
 				<Button asChild variant="ghost" size="sm">
-					<Link href="/analytics" className="flex items-center gap-1">
+					<Link href="/dashboard/analytics" className="flex items-center gap-1">
 						View All
 						<ArrowRight className="h-4 w-4" />
 					</Link>
@@ -180,7 +180,7 @@ export function AnalyticsPreview({ expenses }: AnalyticsPreviewProps) {
 
 				<div className="mt-4 pt-4 border-t">
 					<Button asChild className="w-full" variant="outline">
-						<Link href="/analytics" className="flex items-center gap-2">
+						<Link href="/dashboard/analytics" className="flex items-center gap-2">
 							<BarChart3 className="h-4 w-4" />
 							View Detailed Analytics
 							<ArrowRight className="h-4 w-4" />

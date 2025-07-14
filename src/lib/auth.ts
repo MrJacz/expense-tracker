@@ -1,22 +1,19 @@
-// lib/auth.ts - Simplified NextAuth Configuration
+// lib/auth.ts - NextAuth Configuration with JWT Strategy
 
 import { DefaultSession, NextAuthOptions } from "next-auth";
 import CredentialsProvider from "next-auth/providers/credentials";
-import bcryptjs from "bcryptjs";
-import { query } from "./database";
+import { UserRepository } from "@/lib/database/index";
 
 /**
- * NextAuth Configuration Explained:
+ * NextAuth Configuration
  *
- * NextAuth is like a security guard for your app that:
- * 1. **Adapter**: Stores user sessions in your PostgreSQL database
- * 2. **Providers**: Handles different login methods (email/password, Google, etc.)
- * 3. **Callbacks**: Customizes what data gets stored in sessions
- * 4. **Security**: Handles all the complex security stuff automatically
+ * Uses JWT strategy for credentials authentication
+ * Supports both OAuth and credentials authentication
  */
-
 export const authOptions: NextAuthOptions = {
-	// How users can sign in
+	// Note: adapter removed for JWT strategy with credentials provider
+	// adapter: PrismaAdapter(prisma),
+
 	providers: [
 		CredentialsProvider({
 			name: "credentials",
@@ -24,41 +21,28 @@ export const authOptions: NextAuthOptions = {
 				email: { label: "Email", type: "email" },
 				password: { label: "Password", type: "password" }
 			},
-
-			// This function runs when someone tries to log in
 			async authorize(credentials) {
 				if (!credentials?.email || !credentials?.password) {
 					return null;
 				}
 
 				try {
-					// Look up user and their password
-					const userResult = await query(
-						`
-            SELECT u.id, u.email, u.name, u."emailVerified", u.image, uc.password_hash
-            FROM users u
-            JOIN user_credentials uc ON u.id = uc.user_id
-            WHERE u.email = $1
-          `,
-						[credentials.email]
-					);
+					// Use UserRepository to get user with credentials
+					const user = await UserRepository.getUserByEmail(credentials.email);
 
-					if (userResult.rows.length === 0) {
-						return null; // No user found
+					if (!user || !user.hasPassword) {
+						return null;
 					}
 
-					const user = userResult.rows[0];
-
-					// Check if password is correct
-					const isPasswordValid = await bcryptjs.compare(credentials.password, user.password_hash);
+					// Verify password
+					const isPasswordValid = await UserRepository.verifyPassword(user.id, credentials.password);
 
 					if (!isPasswordValid) {
-						return null; // Wrong password
+						return null;
 					}
 
-					// Return user data (NextAuth will handle the session)
 					return {
-						id: user.id.toString(),
+						id: user.id,
 						email: user.email,
 						name: user.name,
 						emailVerified: user.emailVerified,
@@ -70,41 +54,96 @@ export const authOptions: NextAuthOptions = {
 				}
 			}
 		})
+		// Add other providers here (Google, GitHub, etc.)
+		// GoogleProvider({
+		//   clientId: process.env.GOOGLE_CLIENT_ID!,
+		//   clientSecret: process.env.GOOGLE_CLIENT_SECRET!,
+		// }),
 	],
 
-	// Customize what data goes into the session
 	callbacks: {
 		async jwt({ token, user }) {
-			// Add user ID to token when user signs in
+			// Initial sign in
 			if (user) {
 				token.id = user.id;
 			}
 			return token;
 		},
+
 		async session({ session, token }) {
-			// Add user ID to session from token
-			if (token && session.user) {
+			// Send properties to the client (JWT strategy)
+			if (token) {
 				session.user.id = token.id as string;
 			}
 			return session;
+		},
+
+		async signIn() {
+			// Allow all sign ins for now
+			return true;
 		}
 	},
 
-	// Session settings
 	session: {
-		strategy: "jwt", // Required for credentials provider
-		maxAge: 30 * 24 * 60 * 60 // 30 days
+		strategy: "jwt", // Use JWT strategy for credentials provider compatibility
+		maxAge: 30 * 24 * 60 * 60, // 30 days
+		updateAge: 24 * 60 * 60 // 24 hours
 	},
 
-	// Required for security
+	pages: {
+		signIn: "/auth/login",
+		newUser: "/getting-started"
+		// signUp: "/auth/register",
+		// error: "/auth/error",
+	},
+
+	events: {
+		async signIn({ user, account }) {
+			console.log(`User ${user.email} signed in via ${account?.provider}`);
+		},
+
+		async signOut() {
+			console.log(`User signed out`);
+		},
+
+		async createUser({ user }) {
+			console.log(`New user created: ${user.email}`);
+
+			// Create user preferences for new users
+			try {
+				await UserRepository.updateUserPreferences(user.id, {
+					defaultCurrency: "AUD",
+					theme: "system"
+				});
+			} catch (error) {
+				console.error("Error creating user preferences:", error);
+			}
+		}
+	},
+
+	debug: process.env.NODE_ENV === "development",
 	secret: process.env.NEXTAUTH_SECRET
 };
 
-// TypeScript: Tell NextAuth what our session looks like
+// TypeScript: Extend NextAuth types
 declare module "next-auth" {
 	interface Session {
 		user: {
 			id: string;
 		} & DefaultSession["user"];
+	}
+
+	interface User {
+		id: string;
+		email: string;
+		name?: string | null;
+		image?: string | null;
+		emailVerified?: Date | null;
+	}
+}
+
+declare module "next-auth/jwt" {
+	interface JWT {
+		id: string;
 	}
 }

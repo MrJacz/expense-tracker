@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import bcryptjs from "bcryptjs";
-import { query } from "@/lib/database";
+import { UserDataService } from "@/lib/database";
 
 export async function POST(request: NextRequest) {
 	try {
@@ -16,38 +15,21 @@ export async function POST(request: NextRequest) {
 		}
 
 		// Check if user already exists
-		const existingUser = await query("SELECT id FROM users WHERE email = $1", [email]);
+		const existingUser = await UserDataService.getUserByEmail(email);
 
-		if (existingUser.rows.length > 0) {
+		if (existingUser) {
 			return NextResponse.json({ error: "User already exists with this email" }, { status: 400 });
 		}
 
-		// Hash password
-		const hashedPassword = await bcryptjs.hash(password, 12);
-
-		// Create user
-		const newUser = await query(
-			`INSERT INTO users (email, name, "emailVerified")
-       VALUES ($1, $2, CURRENT_TIMESTAMP)
-       RETURNING id, email, name`,
-			[email, name]
-		);
-
-		const userId = newUser.rows[0].id;
-
-		// Store password
-		await query(
-			`INSERT INTO user_credentials (user_id, password_hash)
-       VALUES ($1, $2)`,
-			[userId, hashedPassword]
-		);
+		// Create user with password
+		const newUser = await UserDataService.createUserWithPassword(email, password, name);
 
 		return NextResponse.json({
 			message: "User created successfully",
 			user: {
-				id: userId,
-				email: email,
-				name: name
+				id: newUser.id,
+				email: newUser.email,
+				name: newUser.name
 			}
 		});
 	} catch (error) {

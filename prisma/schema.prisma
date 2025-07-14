@@ -1,0 +1,621 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider        = "prisma-client-js"
+  previewFeatures = ["multiSchema"]
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+  schemas  = ["public", "app"]
+}
+
+// ===== ENUMS =====
+
+enum AccountType {
+  checking
+  savings
+  credit_card
+  cash
+  investment
+  superannuation
+  loan
+
+  @@map("account_type")
+  @@schema("app")
+}
+
+enum AssetType {
+  liquid
+  investment
+  property
+  vehicle
+  other
+
+  @@map("asset_type")
+  @@schema("app")
+}
+
+enum TransactionType {
+  expense
+  income
+  transfer
+
+  @@map("transaction_type")
+  @@schema("app")
+}
+
+enum BudgetCategoryType {
+  needs
+  wants
+  savings_debt
+
+  @@map("budget_category_type")
+  @@schema("app")
+}
+
+enum RecurringFrequency {
+  daily
+  weekly
+  fortnightly
+  monthly
+  quarterly
+  yearly
+
+  @@map("recurring_frequency")
+  @@schema("app")
+}
+
+enum InterestType {
+  fixed
+  variable
+
+  @@map("interest_type")
+  @@schema("app")
+}
+
+enum DebtStatus {
+  active
+  paid_off
+  in_default
+  in_collections
+  hardship
+  closed
+
+  @@map("debt_status")
+  @@schema("app")
+}
+
+enum SecurityType {
+  stock
+  etf
+  crypto
+
+  @@map("security_type")
+  @@schema("app")
+}
+
+enum AuditAction {
+  INSERT
+  UPDATE
+  DELETE
+
+  @@map("audit_action")
+  @@schema("app")
+}
+
+// ===== CORE MODELS =====
+
+// ----------------------------------------
+//       INTEGRATIONS
+// ----------------------------------------
+
+// Stores configured integrations for each user
+model Integration {
+  id          String    @id @default(uuid()) @db.Uuid
+  userId      String    @map("user_id") @db.Uuid
+  name        String    // Display name for the integration
+  type        String    // 'upbank', 'csv', 'manual', etc.
+  apiSource   String?   @map("api_source") // For API integrations
+  
+  // Configuration stored as JSON
+  config      Json      @db.JsonB
+  
+  // Status tracking
+  isActive    Boolean   @default(true) @map("is_active")
+  isVerified  Boolean   @default(false) @map("is_verified")
+  
+  // Sync tracking
+  lastSyncAt       DateTime? @map("last_sync_at") @db.Timestamptz(6)
+  lastSyncStatus   String?   @default("pending") @map("last_sync_status") // 'success', 'error', 'pending'
+  lastErrorMessage String?   @map("last_error_message") @db.Text
+  
+  // Metadata
+  metadata    Json?     @db.JsonB
+  
+  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  // Relations
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  importSessions ImportSession[]
+
+  @@unique([userId, type, name])
+  @@map("integrations")
+  @@schema("app")
+}
+
+// Tracks individual import sessions/runs
+model ImportSession {
+  id            String    @id @default(uuid()) @db.Uuid
+  integrationId String    @map("integration_id") @db.Uuid
+  userId        String    @map("user_id") @db.Uuid
+  
+  // Session details
+  startedAt     DateTime  @default(now()) @map("started_at") @db.Timestamptz(6)
+  completedAt   DateTime? @map("completed_at") @db.Timestamptz(6)
+  status        String    @default("running") // 'running', 'completed', 'failed'
+  
+  // Results
+  accountsImported      Int       @default(0) @map("accounts_imported")
+  transactionsImported  Int       @default(0) @map("transactions_imported")
+  transactionsUpdated   Int       @default(0) @map("transactions_updated")
+  errorsCount           Int       @default(0) @map("errors_count")
+  
+  // Detailed logs
+  logs          Json[]    @db.JsonB
+  errors        Json[]    @db.JsonB
+  
+  // Metadata
+  metadata      Json?     @db.JsonB
+
+  // Relations
+  integration Integration @relation(fields: [integrationId], references: [id], onDelete: Cascade)
+  user        User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("import_sessions")
+  @@schema("app")
+}
+
+// ----------------------------------------
+//       USER & AUTHENTICATION
+// ----------------------------------------
+
+model User {
+  id            String    @id @default(uuid()) @db.Uuid
+  name          String?
+  email         String    @unique
+  emailVerified DateTime? @map("email_verified") @db.Timestamptz(6)
+  image         String?
+  createdAt     DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt     DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  // Relations
+  accounts               Account[]
+  sessions               Session[]
+  preferences            UserPreferences?
+  credentials            UserCredentials?
+  financialAccounts      FinancialAccount[]
+  transactions           Transaction[]
+  categories             Category[]
+  budgets                Budget[]
+  goals                  Goal[]
+  tags                   Tag[]
+  recurringTransactions  RecurringTransaction[]
+  netWorthSnapshots      NetWorthSnapshot[]
+  auditLogs              AuditLog[]
+  integrations           Integration[]
+  importSessions         ImportSession[]
+
+  @@map("users")
+  @@schema("app")
+}
+
+// NextAuth.js required tables
+model Account {
+  id                String  @id @default(uuid()) @db.Uuid
+  userId            String  @map("user_id") @db.Uuid
+  type              String
+  provider          String
+  providerAccountId String  @map("provider_account_id")
+  refreshToken      String? @map("refresh_token") @db.Text
+  accessToken       String? @map("access_token") @db.Text
+  expiresAt         Int?    @map("expires_at")
+  tokenType         String? @map("token_type")
+  scope             String?
+  idToken           String? @map("id_token") @db.Text
+  sessionState      String? @map("session_state")
+
+  // Relations
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+  @@map("accounts")
+  @@schema("app")
+}
+
+model Session {
+  id           String   @id @default(uuid()) @db.Uuid
+  sessionToken String   @unique @map("session_token")
+  userId       String   @map("user_id") @db.Uuid
+  expires      DateTime @db.Timestamptz(6)
+
+  // Relations
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("sessions")
+  @@schema("app")
+}
+
+model VerificationToken {
+  identifier String   
+  token      String   @unique
+  expires    DateTime @db.Timestamptz(6)
+
+  @@id([identifier, token])
+  @@map("verification_tokens")
+  @@schema("app")
+}
+
+// Stores user-specific settings and preferences
+model UserPreferences {
+  userId          String   @id @map("user_id") @db.Uuid
+  defaultCurrency String   @default("AUD") @map("default_currency") @db.Char(3)
+  theme           String   @default("system")
+  createdAt       DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt       DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  // Relations
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("user_preferences")
+  @@schema("app")
+}
+
+// Stores password credentials for email/password authentication
+model UserCredentials {
+  userId       String   @id @map("user_id") @db.Uuid
+  passwordHash String   @map("password_hash") @db.Text
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt    DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  // Relations
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("user_credentials")
+  @@schema("app")
+}
+
+// ----------------------------------------
+//      CORE FINANCIALS & ASSETS
+// ----------------------------------------
+
+// Stores all user-managed financial accounts and physical assets
+model FinancialAccount {
+  id            String      @id @default(uuid()) @db.Uuid
+  userId        String      @map("user_id") @db.Uuid
+  name          String
+  type          AccountType
+  balance       Decimal     @default(0.00) @db.Decimal(19, 4)
+  isAsset       Boolean     @default(false) @map("is_asset")
+  assetType     AssetType?  @map("asset_type")
+  apiSource     String?     @map("api_source")
+  apiIdentifier String?     @map("api_identifier")
+  createdAt     DateTime    @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt     DateTime    @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  // Relations
+  user                  User                    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  debtDetails           DebtDetails?
+  holdings              Holding[]
+  recurringTransactions RecurringTransaction[]
+  goals                 Goal[]
+  transactions          Transaction[]
+
+  @@map("financial_accounts")
+  @@schema("app")
+}
+
+// Stores detailed information specific to debt accounts
+model DebtDetails {
+  id                   String              @id @default(uuid()) @db.Uuid
+  financialAccountId   String              @unique @map("financial_account_id") @db.Uuid
+  
+  // Basic Debt Information
+  accountNumber        String?             @map("account_number")
+  lenderName           String?             @map("lender_name")
+  lenderContactInfo    String?             @map("lender_contact_info") @db.Text
+  
+  // Financial Details
+  originalBalance      Decimal             @map("original_balance") @db.Decimal(19, 4)
+  creditLimit          Decimal?            @map("credit_limit") @db.Decimal(19, 4)
+  accruedInterest      Decimal?            @default(0.00) @map("accrued_interest") @db.Decimal(19, 4)
+  
+  // Interest Information
+  interestRateApr      Decimal             @map("interest_rate_apr") @db.Decimal(5, 2)
+  interestType         InterestType?       @map("interest_type")
+  promoRate            Decimal?            @map("promo_rate") @db.Decimal(5, 2)
+  promoEndDate         DateTime?           @map("promo_end_date") @db.Date
+  
+  // Payment Information
+  minimumPayment       Decimal             @map("minimum_payment") @db.Decimal(19, 4)
+  paymentFrequency     RecurringFrequency  @default(monthly) @map("payment_frequency")
+  dueDateDayOfMonth    Int?                @map("due_date_day_of_month")
+  nextPaymentDue       DateTime?           @map("next_payment_due") @db.Date
+  lastPaymentDate      DateTime?           @map("last_payment_date") @db.Date
+  lastPaymentAmount    Decimal?            @map("last_payment_amount") @db.Decimal(19, 4)
+  
+  // Loan Details
+  loanTermMonths       Int?                @map("loan_term_months")
+  originalPayoffDate   DateTime?           @map("original_payoff_date") @db.Date
+  
+  // Status & Management
+  status               DebtStatus          @default(active)
+  collateralInfo       String?             @map("collateral_info") @db.Text
+  notes                String?             @db.Text
+  
+  // Fees
+  annualFee            Decimal?            @default(0.00) @map("annual_fee") @db.Decimal(19, 4)
+  latePaymentFee       Decimal?            @default(0.00) @map("late_payment_fee") @db.Decimal(19, 4)
+  
+  // Timestamps
+  openedAt             DateTime?           @map("opened_at") @db.Date
+  createdAt            DateTime            @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt            DateTime            @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  // Relations
+  financialAccount FinancialAccount @relation(fields: [financialAccountId], references: [id], onDelete: Cascade)
+
+  @@map("debt_details")
+  @@schema("app")
+}
+
+// The central table for all financial events
+model Transaction {
+  id          String          @id @default(uuid()) @db.Uuid
+  userId      String          @map("user_id") @db.Uuid
+  accountId   String          @map("account_id") @db.Uuid
+  description String
+  date        DateTime        @db.Timestamptz(6)
+  type        TransactionType
+  createdAt   DateTime        @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime        @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  // Relations
+  user             User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  account          FinancialAccount   @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  splits           TransactionSplit[]
+  attachments      Attachment[]
+  transactionTags  TransactionTag[]
+
+  @@map("transactions")
+  @@schema("app")
+}
+
+// Supports splitting a single transaction into multiple categories/parts
+model TransactionSplit {
+  id            String    @id @default(uuid()) @db.Uuid
+  transactionId String    @map("transaction_id") @db.Uuid
+  categoryId    String?   @map("category_id") @db.Uuid
+  amount        Decimal   @db.Decimal(19, 4)
+  notes         String?
+
+  // Relations
+  transaction Transaction @relation(fields: [transactionId], references: [id], onDelete: Cascade)
+  category    Category?   @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+
+  @@map("transaction_splits")
+  @@schema("app")
+}
+
+// Stores file attachments for transactions (e.g., receipts)
+model Attachment {
+  id            String      @id @default(uuid()) @db.Uuid
+  transactionId String      @map("transaction_id") @db.Uuid
+  fileName      String      @map("file_name")
+  fileUrl       String      @map("file_url")
+  fileType      String?     @map("file_type")
+  uploadedAt    DateTime    @default(now()) @map("uploaded_at") @db.Timestamptz(6)
+
+  // Relations
+  transaction Transaction @relation(fields: [transactionId], references: [id], onDelete: Cascade)
+
+  @@map("attachments")
+  @@schema("app")
+}
+
+// ----------------------------------------
+//      INVESTMENTS
+// ----------------------------------------
+
+// Master list of all securities (stocks, ETFs, crypto)
+model Security {
+  id           String       @id @default(uuid()) @db.Uuid
+  tickerSymbol String       @map("ticker_symbol")
+  name         String
+  type         SecurityType
+  currency     String       @db.Char(3)
+
+  // Relations
+  holdings Holding[]
+
+  @@unique([tickerSymbol, type])
+  @@map("securities")
+  @@schema("app")
+}
+
+// Tracks user's holdings of each security in each investment account
+model Holding {
+  id         String    @id @default(uuid()) @db.Uuid
+  accountId  String    @map("account_id") @db.Uuid
+  securityId String    @map("security_id") @db.Uuid
+  quantity   Decimal   @db.Decimal(18, 8)
+  costBasis  Decimal   @map("cost_basis") @db.Decimal(19, 4)
+  createdAt  DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt  DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  // Relations
+  account  FinancialAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  security Security         @relation(fields: [securityId], references: [id], onDelete: Cascade)
+
+  @@unique([accountId, securityId])
+  @@map("holdings")
+  @@schema("app")
+}
+
+// ----------------------------------------
+//      ORGANIZATION & PLANNING
+// ----------------------------------------
+
+// User-defined categories for transactions
+model Category {
+  id                   String               @id @default(uuid()) @db.Uuid
+  userId               String               @map("user_id") @db.Uuid
+  name                 String
+  parentCategoryId     String?              @map("parent_category_id") @db.Uuid
+  budgetClassification BudgetCategoryType? @map("budget_classification")
+  isDefault            Boolean              @default(false) @map("is_default")
+
+  // Relations
+  user            User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  parentCategory  Category?          @relation("CategoryHierarchy", fields: [parentCategoryId], references: [id], onDelete: SetNull)
+  subcategories   Category[]         @relation("CategoryHierarchy")
+  transactionSplits TransactionSplit[]
+  budgets         Budget[]
+  recurringTransactions RecurringTransaction[]
+
+  @@unique([userId, name])
+  @@map("categories")
+  @@schema("app")
+}
+
+// User-defined tags for granular transaction organization
+model Tag {
+  id     String @id @default(uuid()) @db.Uuid
+  userId String @map("user_id") @db.Uuid
+  name   String
+
+  // Relations
+  user            User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  transactionTags TransactionTag[]
+
+  @@unique([userId, name])
+  @@map("tags")
+  @@schema("app")
+}
+
+// Many-to-many relationship between transactions and tags
+model TransactionTag {
+  transactionId String @map("transaction_id") @db.Uuid
+  tagId         String @map("tag_id") @db.Uuid
+
+  // Relations
+  transaction Transaction @relation(fields: [transactionId], references: [id], onDelete: Cascade)
+  tag         Tag         @relation(fields: [tagId], references: [id], onDelete: Cascade)
+
+  @@id([transactionId, tagId])
+  @@map("transaction_tags")
+  @@schema("app")
+}
+
+// Stores user-defined budgets for categories
+model Budget {
+  id          String   @id @default(uuid()) @db.Uuid
+  userId      String   @map("user_id") @db.Uuid
+  categoryId  String   @map("category_id") @db.Uuid
+  amount      Decimal  @db.Decimal(19, 4)
+  periodStart DateTime @map("period_start") @db.Date
+  periodEnd   DateTime @map("period_end") @db.Date
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  // Relations
+  user     User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  category Category @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, categoryId, periodStart])
+  @@map("budgets")
+  @@schema("app")
+}
+
+// Stores templates for recurring transactions (subscriptions, bills)
+model RecurringTransaction {
+  id          String             @id @default(uuid()) @db.Uuid
+  userId      String             @map("user_id") @db.Uuid
+  accountId   String             @map("account_id") @db.Uuid
+  categoryId  String?            @map("category_id") @db.Uuid
+  description String
+  amount      Decimal            @db.Decimal(19, 4)
+  frequency   RecurringFrequency
+  startDate   DateTime           @map("start_date") @db.Date
+  endDate     DateTime?          @map("end_date") @db.Date
+  nextDueDate DateTime           @map("next_due_date") @db.Date
+  isActive    Boolean            @default(true) @map("is_active")
+  createdAt   DateTime           @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  // Relations
+  user     User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
+  account  FinancialAccount     @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  category Category?            @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+
+  @@map("recurring_transactions")
+  @@schema("app")
+}
+
+// Stores user-defined financial goals
+model Goal {
+  id                String            @id @default(uuid()) @db.Uuid
+  userId            String            @map("user_id") @db.Uuid
+  name              String
+  targetAmount      Decimal           @map("target_amount") @db.Decimal(19, 4)
+  currentAmount     Decimal           @default(0.00) @map("current_amount") @db.Decimal(19, 4)
+  targetDate        DateTime?         @map("target_date") @db.Date
+  linkedAccountId   String?           @map("linked_account_id") @db.Uuid
+  createdAt         DateTime          @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  // Relations
+  user          User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  linkedAccount FinancialAccount? @relation(fields: [linkedAccountId], references: [id], onDelete: SetNull)
+
+  @@map("goals")
+  @@schema("app")
+}
+
+// ----------------------------------------
+//      ANALYTICS & AUDITING
+// ----------------------------------------
+
+// Stores periodic snapshots of net worth for fast reporting
+model NetWorthSnapshot {
+  id           String   @id @default(uuid()) @db.Uuid
+  userId       String   @map("user_id") @db.Uuid
+  snapshotDate DateTime @map("snapshot_date") @db.Date
+  netWorth     Decimal  @map("net_worth") @db.Decimal(19, 4)
+
+  // Relations
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, snapshotDate])
+  @@map("net_worth_snapshots")
+  @@schema("app")
+}
+
+// Generic audit log table to track all changes
+model AuditLog {
+  id         BigInt      @id @default(autoincrement())
+  schemaName String      @map("schema_name")
+  tableName  String      @map("table_name")
+  recordId   String?     @map("record_id") @db.Uuid
+  action     AuditAction
+  oldData    Json?       @map("old_data") @db.JsonB
+  newData    Json?       @map("new_data") @db.JsonB
+  userId     String?     @map("user_id") @db.Uuid
+  changedAt  DateTime    @default(now()) @map("changed_at") @db.Timestamptz(6)
+
+  // Relations
+  user User? @relation(fields: [userId], references: [id])
+
+  @@map("audit_log")
+  @@schema("app")
+}
